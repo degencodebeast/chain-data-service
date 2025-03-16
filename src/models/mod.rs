@@ -3,6 +3,7 @@
 // Implement serialization/deserialization
 
 use serde::{Serialize, Deserialize};
+use sqlx::FromRow;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Address {
@@ -10,7 +11,7 @@ pub struct Address {
     pub added_at: i64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Transaction {
     pub signature: String,
     pub block_time: i64,
@@ -20,6 +21,30 @@ pub struct Transaction {
     pub amount: Option<f64>,
     pub program_id: Option<String>,
     pub success: bool,
+}
+
+impl Transaction {
+    pub fn new(
+        signature: String,
+        block_time: i64,
+        slot: i64,
+        source_address: String,
+        destination_address: Option<String>,
+        amount: Option<f64>,
+        program_id: Option<String>,
+        success: bool,
+    ) -> Self {
+        Self {
+            signature,
+            block_time,
+            slot,
+            source_address,
+            destination_address,
+            amount,
+            program_id,
+            success,
+        }
+    }
 }
 
 // API response models

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO tracked_addresses (address, added_at) \n        VALUES (?, ?) \n        ON CONFLICT(address) DO UPDATE SET added_at = excluded.added_at\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "071dffd0e1af53727e8ac8915a53cb22ea817655f452121f4319fd00fdb8e3b8"
+}

@@ -4,19 +4,31 @@
 //   Returns transactions and total count
 
 use sqlx::{Pool, Sqlite};
-use crate::models::Address;
+// This import is unused and can be removed
+// use crate::models::Address;
 use std::time::{SystemTime, UNIX_EPOCH};
+use crate::validation::validate_solana_address;
+
 
 pub async fn add_address(pool: &Pool<Sqlite>, address: &str) -> Result<(), sqlx::Error> {
-    let now = SystemTime::now()
+    // Validate address
+    validate_solana_address(address)
+        .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
+    
+    let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs() as i64;
 
+    // Convert to use query! macro
     sqlx::query!(
-        "INSERT INTO tracked_addresses (address, added_at) VALUES (?, ?)
-         ON CONFLICT(address) DO NOTHING",
-        address, now
+        r#"
+        INSERT INTO tracked_addresses (address, added_at) 
+        VALUES (?, ?) 
+        ON CONFLICT(address) DO UPDATE SET added_at = excluded.added_at
+        "#,
+        address,
+        timestamp
     )
     .execute(pool)
     .await?;
@@ -24,26 +36,54 @@ pub async fn add_address(pool: &Pool<Sqlite>, address: &str) -> Result<(), sqlx:
     Ok(())
 }
 
-pub async fn remove_address(pool: &Pool<Sqlite>, address: &str) -> Result<(), sqlx::Error> {
-    sqlx::query!("DELETE FROM tracked_addresses WHERE address = ?", address)
-        .execute(pool)
-        .await?;
-
-    Ok(())
+pub async fn remove_address(pool: &Pool<Sqlite>, address: &str) -> Result<bool, sqlx::Error> {
+    // Convert to use query! macro
+    let result = sqlx::query!(
+        r#"DELETE FROM tracked_addresses WHERE address = ?"#,
+        address
+    )
+    .execute(pool)
+    .await?;
+    
+    Ok(result.rows_affected() > 0)
 }
 
 pub async fn is_address_tracked(pool: &Pool<Sqlite>, address: &str) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query!("SELECT address FROM tracked_addresses WHERE address = ?", address)
-        .fetch_optional(pool)
-        .await?;
-
-    Ok(result.is_some())
+    // Use query_scalar! macro
+    let count = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) FROM tracked_addresses WHERE address = ?"#,
+        address
+    )
+    .fetch_one(pool)
+    .await?;
+    
+    Ok(count > 0)
 }
 
 pub async fn get_all_tracked_addresses(pool: &Pool<Sqlite>) -> Result<Vec<String>, sqlx::Error> {
-    let rows = sqlx::query!("SELECT address FROM tracked_addresses")
+    // Option 1: Using the query! macro with filtering
+    let addresses = sqlx::query!(
+        r#"SELECT address FROM tracked_addresses"#
+    )
+    .fetch_all(pool)
+    .await?;
+    
+    // Filter out any NULL addresses and unwrap the rest
+    Ok(addresses
+        .into_iter()
+        .filter_map(|row| row.address)
+        .collect())
+    
+    // Option 2: Alternative approach using query() like transaction.rs does
+    /*
+    let rows = sqlx::query("SELECT address FROM tracked_addresses")
         .fetch_all(pool)
         .await?;
-
-    Ok(rows.into_iter().map(|row| row.address).collect())
+    
+    let addresses = rows.iter()
+        .map(|row| row.get::<String, _>("address"))
+        .collect();
+    
+    Ok(addresses)
+    */
 }

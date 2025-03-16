@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT address FROM tracked_addresses",
+  "describe": {
+    "columns": [
+      {
+        "name": "address",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "ab414fada4e894d7756e454ae10c860f5cddb0abfbdcd717fac4642a82f35abb"
+}

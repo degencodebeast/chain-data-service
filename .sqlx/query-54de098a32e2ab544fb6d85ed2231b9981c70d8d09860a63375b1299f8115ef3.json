@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO transactions \n            (signature, block_time, slot, source_address, destination_address, amount, program_id, success)\n            VALUES (?, ?, ?, ?, ?, ?, ?, ?)\n            ON CONFLICT(signature) DO NOTHING\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "54de098a32e2ab544fb6d85ed2231b9981c70d8d09860a63375b1299f8115ef3"
+}
