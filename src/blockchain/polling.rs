@@ -1,6 +1,7 @@
 use crate::blockchain::client::{SolanaClient, ClientError};
 use crate::blockchain::models::extract_transaction;
 use crate::db::{address, transaction};
+use crate::models::Transaction;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -8,10 +9,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 use crate::state::AppState;
+use tokio::sync::mpsc;
+use crate::blockchain::{worker_pool::WorkerPool, batch_manager::{BatchManager, BatchConfig}};
+use num_cpus;
 
-pub async fn start_polling(
-    state: Arc<AppState>,
-) {
+pub async fn start_polling(state: Arc<AppState>) {
     info!("Starting blockchain polling service");
     
     // Get configuration
@@ -21,15 +23,20 @@ pub async fn start_polling(
     // Create Solana client
     let client = Arc::new(SolanaClient::new(config));
     
+    // Initialize worker pool
+    let worker_pool = WorkerPool::new(state.clone(), num_cpus::get());
+    let worker_sender = worker_pool.get_sender();
+    
     // Set polling interval
     let polling_interval = Duration::from_secs(config.polling_interval_secs);
     
     // Start historical transaction polling
     let historical_state = state.clone();
     let historical_client = client.clone();
+    let historical_sender = worker_sender.clone();
     tokio::spawn(async move {
         loop {
-            match poll_historical_transactions(&historical_client, &historical_state.db_pool).await {
+            match poll_historical_transactions(&historical_client, &historical_state.db_pool, &historical_sender).await {
                 Ok(count) => {
                     if count > 0 {
                         info!("Processed {} historical transactions", count);
@@ -76,7 +83,7 @@ pub async fn start_polling(
         debug!("Polling new transactions from slot {} to {}", current_slot, latest_slot);
         
         // Process new transactions
-        match poll_new_transactions(&client, &db_pool, current_slot, latest_slot).await {
+        match poll_new_transactions(&client, &db_pool, current_slot, latest_slot, &worker_sender).await {
             Ok(count) => {
                 if count > 0 {
                     info!("Processed {} new transactions", count);
@@ -92,6 +99,7 @@ pub async fn start_polling(
 async fn poll_historical_transactions(
     client: &SolanaClient,
     db_pool: &SqlitePool,
+    worker_sender: &mpsc::Sender<Vec<Transaction>>,
 ) -> Result<usize, ClientError> {
     // Get all tracked addresses
     let addresses = match address::get_all_tracked_addresses(db_pool).await {
@@ -110,7 +118,7 @@ async fn poll_historical_transactions(
     
     // Process each address
     for addr in addresses {
-        match process_historical_address(client, db_pool, &addr).await {
+        match process_historical_address(client, db_pool, &addr, worker_sender).await {
             Ok(count) => total_processed += count,
             Err(e) => error!("Error processing historical transactions for {}: {}", addr, e),
         }
@@ -124,6 +132,7 @@ async fn process_historical_address(
     client: &SolanaClient,
     db_pool: &SqlitePool,
     address: &str,
+    worker_sender: &mpsc::Sender<Vec<Transaction>>,
 ) -> Result<usize, ClientError> {
     debug!("Processing historical transactions for {}", address);
     
@@ -184,7 +193,7 @@ async fn process_historical_address(
         }
         
         // Process this batch of transactions
-        let batch_result = process_transaction_signatures(client, db_pool, &new_signatures).await?;
+        let batch_result = process_transaction_signatures(client, db_pool, &new_signatures, worker_sender).await?;
         total_processed += batch_result;
         
         // Avoid rate limiting
@@ -205,6 +214,7 @@ async fn poll_new_transactions(
     db_pool: &SqlitePool,
     start_slot: u64,
     end_slot: u64,
+    worker_sender: &mpsc::Sender<Vec<Transaction>>,
 ) -> Result<usize, ClientError> {
     // Get all tracked addresses
     let addresses = match address::get_all_tracked_addresses(db_pool).await {
@@ -268,7 +278,7 @@ async fn poll_new_transactions(
         
         // Process batch
         if !all_signatures.is_empty() {
-            match process_transaction_signatures(client, db_pool, &all_signatures).await {
+            match process_transaction_signatures(client, db_pool, &all_signatures, worker_sender).await {
                 Ok(count) => total_processed += count,
                 Err(e) => error!("Error processing transaction batch: {}", e),
             }
@@ -283,6 +293,7 @@ async fn process_transaction_signatures(
     client: &SolanaClient,
     db_pool: &SqlitePool,
     signatures: &[String],
+    worker_sender: &mpsc::Sender<Vec<Transaction>>,
 ) -> Result<usize, ClientError> {
     if signatures.is_empty() {
         return Ok(0);
@@ -291,46 +302,43 @@ async fn process_transaction_signatures(
     let mut processed = 0;
     let mut transactions = Vec::new();
     
-    // Process in smaller batches to avoid memory issues
+    // Process in parallel using worker pool
     let batch_size = 10;
     for chunk in signatures.chunks(batch_size) {
-        // Fetch transaction details in parallel with rate limiting
         let mut chunk_transactions = Vec::new();
         
-        for sig in chunk {
-            match client.get_transaction(sig).await {
+        let futures: Vec<_> = chunk.iter().map(|sig| {
+            client.get_transaction(sig)
+        }).collect();
+        
+        for (i, result) in futures::future::join_all(futures).await.into_iter().enumerate() {
+            match result {
                 Ok(tx) => {
-                    if let Some(transaction) = extract_transaction(sig, &tx) {
+                    if let Some(transaction) = extract_transaction(&chunk[i], &tx) {
                         chunk_transactions.push(transaction);
                     }
                 },
                 Err(e) => {
-                    warn!("Failed to get transaction {}: {}", sig, e);
-                    continue;
+                    warn!("Failed to get transaction {}: {}", chunk[i], e);
                 }
             }
-            
-            // Small delay between requests to avoid rate limiting
-            sleep(Duration::from_millis(100)).await;
         }
         
         transactions.extend(chunk_transactions);
         
-        // Avoid overloading the client with too many requests at once
+        // Rate limiting
         sleep(Duration::from_millis(200)).await;
     }
     
-    // Store transactions in database
+    // Send to batch manager instead of direct database write
     if !transactions.is_empty() {
-        match transaction::add_transactions(db_pool, &transactions).await {
-            Ok(_) => {
-                processed = transactions.len();
-                debug!("Successfully stored {} transactions", processed);
-            },
-            Err(e) => {
-                error!("Failed to store transactions: {}", e);
-            }
+        let processed_count = transactions.len();
+        if let Err(e) = worker_sender.send(transactions).await {
+            error!("Failed to send transactions to batch manager: {}", e);
+            return Ok(0);
         }
+        processed = processed_count;
+        debug!("Sent {} transactions to batch manager", processed);
     }
     
     Ok(processed)

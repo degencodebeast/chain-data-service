@@ -1,17 +1,17 @@
-// Initialize configuration
-// Set up logging
-// Create database connection pool
-// Initialize cache
-// Create shared state
-// Start blockchain polling task
-// Start HTTP server
-
-// Only include modules unique to the binary
-// Remove duplicates that exist in lib.rs
-
-// Add these imports instead
 use chain_data_service::{
-    api, blockchain, cache, config, db, models, service, validation, state
+    api, 
+    blockchain::{
+        self,
+        worker_pool::WorkerPool,
+        batch_manager::{BatchManager, BatchConfig}
+    },
+    cache, 
+    config, 
+    db, 
+    models, 
+    service, 
+    validation, 
+    state
     // Any other modules you need
 };
 
@@ -21,6 +21,7 @@ use config::Config;
 use tokio::sync::Mutex;
 use cache::TransactionCache;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use num_cpus;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -58,7 +59,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cache: Arc::new(Mutex::new(cache)),
     });
 
-    // Start blockchain polling task
+    // Initialize worker pool with proper number of cores
+    let worker_pool = WorkerPool::new(app_state.clone(), num_cpus::get());
+    let worker_sender = worker_pool.get_sender();
+
+    // Initialize batch manager with default config
+    let batch_config = BatchConfig::default();
+    let batch_manager = BatchManager::new(
+        app_state.clone(),
+        batch_config,
+        worker_sender.clone(), // Clone sender for batch manager
+    );
+
+    // Start batch manager in background
+    let batch_manager_handle = tokio::spawn(async move {
+        batch_manager.start().await;
+    });
+
+    // Start blockchain polling with worker sender
     let polling_state = app_state.clone();
     tokio::spawn(async move {
         blockchain::polling::start_polling(polling_state).await;
