@@ -3,7 +3,7 @@ use crate::blockchain::models::extract_transaction;
 use crate::models::Transaction;
 use crate::db::address;  // Import the address module
 use sqlx::SqlitePool;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 //use futures::stream::{self, StreamExt};
 use std::collections::HashSet;
 use tokio::time::sleep;

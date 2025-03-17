@@ -1,5 +1,4 @@
 use chain_data_service::db::{connection, address};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

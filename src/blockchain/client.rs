@@ -1,15 +1,15 @@
 use crate::config::Config;
 use solana_client::rpc_client::{RpcClient, GetConfirmedSignaturesForAddress2Config};
 use solana_client::rpc_config::{RpcTransactionConfig, RpcAccountInfoConfig};
-use solana_client::rpc_response::{RpcConfirmedTransactionStatusWithSignature, Response};
+use solana_client::rpc_response::RpcConfirmedTransactionStatusWithSignature;
 use solana_sdk::signature::Signature;
-use solana_sdk::commitment_config::{CommitmentConfig, CommitmentLevel};
+use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 use solana_transaction_status::EncodedConfirmedTransactionWithStatusMeta;
 use std::str::FromStr;
 use std::time::Duration;
 use thiserror::Error;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info};
 
 #[derive(Error, Debug)]
 pub enum ClientError {

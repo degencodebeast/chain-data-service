@@ -1,14 +1,10 @@
 use crate::blockchain::client::{SolanaClient, ClientError};
 use crate::blockchain::models::extract_transaction;
-use crate::blockchain::processor::process_transaction_batch;
 use crate::db::{address, transaction};
-use crate::models::Transaction;
-//use futures::StreamExt;
 use sqlx::SqlitePool;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::sync::Mutex;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 use crate::state::AppState;

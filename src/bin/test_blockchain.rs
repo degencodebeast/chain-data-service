@@ -144,7 +144,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("✅ Processed {} transactions", processed);
         
         // 8. Verify transactions in database
-        let (txs, count) = transaction::get_transactions(
+        let (txs, _count) = transaction::get_transactions(
             &db_pool,
             test_addresses[0],
             0,

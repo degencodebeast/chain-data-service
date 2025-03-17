@@ -90,7 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // TEST 3: Get transactions with time filtering
     println!("Testing time filtering...");
-    let (recent_txs, recent_count) = transaction::get_transactions(
+    let (recent_txs, _recent_count) = transaction::get_transactions(
         &pool,
         &source_address,
         hour_ago,  // From hour ago

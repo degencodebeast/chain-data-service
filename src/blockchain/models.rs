@@ -1,11 +1,11 @@
 use solana_transaction_status::{
     EncodedConfirmedTransactionWithStatusMeta, UiMessage, UiInstruction, UiTransactionStatusMeta,
-    EncodedTransaction, UiParsedInstruction, UiPartiallyDecodedInstruction, EncodedTransactionWithStatusMeta,
-    UiParsedMessage, UiCompiledInstruction
+    EncodedTransaction,
+    UiParsedMessage,
 };
 use serde_json::Value;
 use crate::models::Transaction;
-use tracing::{debug, warn};
+use tracing::warn;
 use solana_sdk::system_program::ID as SYSTEM_PROGRAM_ID;
 use spl_token::ID as TOKEN_PROGRAM_ID;
 
