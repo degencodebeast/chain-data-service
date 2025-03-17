@@ -6,6 +6,7 @@ pub mod db;
 pub mod models;
 pub mod service;
 pub mod validation;
+pub mod state;
 
 // Re-export specific items for convenience if desired
 pub use db::connection;

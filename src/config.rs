@@ -18,6 +18,9 @@ pub struct Config {
     pub poll_interval: Duration,
     pub cache_ttl: Duration,
     pub cache_max_capacity: u64,
+    pub solana_commitment_level: String,
+    pub rpc_timeout_secs: u64,
+    pub polling_interval_secs: u64,
 }
 
 impl Config {
@@ -46,6 +49,14 @@ impl Config {
             .unwrap_or_else(|_| "1000".to_string())
             .parse()
             .unwrap_or(1000);
+        let solana_commitment_level = env::var("SOLANA_COMMITMENT_LEVEL")
+            .unwrap_or_else(|_| "confirmed".to_string());
+        let rpc_timeout_secs = env::var("RPC_TIMEOUT_SECS")
+            .map(|v| v.parse().unwrap_or(30))
+            .unwrap_or(30);
+        let polling_interval_secs = env::var("POLLING_INTERVAL_SECS")
+            .map(|v| v.parse().unwrap_or(10))
+            .unwrap_or(10);
 
         Self {
             database_url,
@@ -55,6 +66,9 @@ impl Config {
             poll_interval,
             cache_ttl,
             cache_max_capacity,
+            solana_commitment_level,
+            rpc_timeout_secs,
+            polling_interval_secs,
         }
     }
 }
