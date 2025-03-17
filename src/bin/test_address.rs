@@ -19,7 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("✅ Ensured table exists");
     
     // Create test address - use a valid Solana address
-    let test_address = "0xDaF57049f1952B0D628D8fc20461C9D97dF6669D"; // Valid Solana address
+    let test_address = "AhAkbf3cGD6HkFod2rBEE8mie8ks9p7vuss6WGkUFAM9"; // Valid Solana address
     
     // Add address
     println!("Adding test address...");

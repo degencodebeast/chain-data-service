@@ -13,14 +13,15 @@ pub struct Address {
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Transaction {
-    pub signature: String,
-    pub block_time: i64,
-    pub slot: i64,
-    pub source_address: String,
-    pub destination_address: Option<String>,
-    pub amount: Option<f64>,
-    pub program_id: Option<String>,
-    pub success: bool,
+    pub signature: String,                  // → result.transaction.signatures[0]
+    pub block_time: i64,                   // → result.block.block_time (null handling needed)
+    pub slot: i64,                         // → result.block.slot
+    pub source_address: String,            // → result.transaction.message.account_keys[0]
+    pub destination_address: Option<String>,// → requires instruction parsing
+    pub amount: Option<f64>,               // → calculated from balance changes
+    pub program_id: Option<String>,        // → result.transaction.message.account_keys[program_id_index]
+    pub success: bool,                      // → result.meta.err
+    //pub transaction_type: String, // "transfer", "swap", "stake", etc.
 }
 
 impl Transaction {
@@ -60,3 +61,8 @@ pub struct Meta {
     pub offset: i64,
     pub limit: i64,
 }
+
+// Consider adding to schema:
+// - index on source_address
+// - index on destination_address
+// - composite index on (address, block_time) for time-range queries

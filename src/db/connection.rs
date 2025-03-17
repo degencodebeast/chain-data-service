@@ -27,7 +27,33 @@ pub async fn establish_connection() -> Result<Pool<Sqlite>, sqlx::Error> {
     
     // Initialize schema
     sqlx::query(INIT_SCHEMA).execute(&pool).await?;
+    
+    // // Run migrations if present
+    // run_migrations(&pool).await?;
 
     Ok(pool)
 }
+
+// // Add this new function for handling migrations
+// async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
+//     // Check if we have migrations directory
+//     if std::path::Path::new("./migrations").exists() {
+//         tracing::info!("Running database migrations...");
+        
+//         // Run all migrations in the migrations directory
+//         match sqlx::migrate!("./migrations").run(pool).await {
+//             Ok(_) => {
+//                 tracing::info!("Database migrations completed successfully");
+//                 Ok(())
+//             },
+//             Err(e) => {
+//                 tracing::error!("Failed to run migrations: {}", e);
+//                 Err(e)
+//             }
+//         }
+//     } else {
+//         tracing::info!("No migrations directory found, skipping migrations");
+//         Ok(())
+//     }
+// }
 

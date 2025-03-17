@@ -1,8 +1,3 @@
-pub mod address;
-pub mod connection;
-pub mod transaction;
-
-pub const INIT_SCHEMA: &str = r#"
 -- Create tracked_addresses table
 CREATE TABLE IF NOT EXISTS tracked_addresses (
     address TEXT PRIMARY KEY,
@@ -27,4 +22,3 @@ CREATE TABLE IF NOT EXISTS transactions (
 CREATE INDEX IF NOT EXISTS idx_transactions_source_time ON transactions(source_address, block_time);
 CREATE INDEX IF NOT EXISTS idx_transactions_destination_time ON transactions(destination_address, block_time);
 CREATE INDEX IF NOT EXISTS idx_transactions_time ON transactions(block_time);
-"#;

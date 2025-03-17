@@ -20,7 +20,6 @@ use config::Config;
 use tokio::sync::Mutex;
 use cache::TransactionCache;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-//use chain_data_service::validation::validate_solana_address;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
