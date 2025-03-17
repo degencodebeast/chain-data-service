@@ -65,14 +65,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     tracing::info!("Blockchain polling task started");
 
-    // // Start HTTP server
-    // let app = api::create_router(app_state);
-    // let addr = format!("{}:{}", config.server_host, config.server_port);
-    // tracing::info!("Starting server on {}", addr);
+    // Start HTTP server
+    let app = api::create_router(app_state);
+    let addr = format!("{}:{}", config.server_host, config.server_port);
+    tracing::info!("Starting server on {}", addr);
+    
+    // Create a TCP listener
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    tracing::info!("Server listening on {}", addr);
     
     // axum::Server::bind(&addr.parse()?)
     //     .serve(app.into_make_service())
     //     .await?;
+    // Serve the application
+    axum::serve(listener, app).await?;
 
     Ok(())
 }
