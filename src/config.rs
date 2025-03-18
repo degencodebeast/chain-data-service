@@ -21,6 +21,7 @@ pub struct Config {
     pub solana_commitment_level: String,
     pub rpc_timeout_secs: u64,
     pub polling_interval_secs: u64,
+    pub rpc_rate_limit: Option<u32>,
 }
 
 impl Config {
@@ -57,6 +58,9 @@ impl Config {
         let polling_interval_secs = env::var("POLLING_INTERVAL_SECS")
             .map(|v| v.parse().unwrap_or(10))
             .unwrap_or(10);
+        let rpc_rate_limit = env::var("RPC_RATE_LIMIT")
+            .map(|v| v.parse().ok())
+            .unwrap_or(None);
 
         Self {
             database_url,
@@ -69,6 +73,7 @@ impl Config {
             solana_commitment_level,
             rpc_timeout_secs,
             polling_interval_secs,
+            rpc_rate_limit,
         }
     }
 }

@@ -2,11 +2,14 @@ use crate::models::Transaction;
 use crate::state::AppState;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::time::interval;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
+#[derive(Clone)]
 pub struct BatchConfig {
     pub max_batch_size: usize,
     pub flush_interval: Duration,
@@ -24,7 +27,7 @@ impl Default for BatchConfig {
 }
 
 pub struct BatchManager {
-    buffer: TransactionBuffer,
+    buffer: Arc<Mutex<TransactionBuffer>>,
     config: BatchConfig,
     state: Arc<AppState>,
     worker_sender: mpsc::Sender<Vec<Transaction>>,
@@ -43,70 +46,148 @@ impl BatchManager {
         worker_sender: mpsc::Sender<Vec<Transaction>>,
     ) -> Self {
         Self {
-            buffer: TransactionBuffer {
+            buffer: Arc::new(Mutex::new(TransactionBuffer {
                 pending: HashMap::new(),
                 total_size: 0,
                 last_flush: Instant::now(),
-            },
+            })),
             config,
             state,
             worker_sender,
         }
     }
 
-    pub async fn add_transaction(&mut self, transaction: Transaction) {
-        let address = transaction.source_address.clone();
+    pub async fn add_transaction(&self, transaction: Transaction) {
+        // First collect necessary info without holding the lock too long
+        let should_flush;
+        let transactions_to_flush;
         
-        self.buffer.pending
-            .entry(address)
-            .or_insert_with(Vec::new)
-            .push(transaction);
+        {
+            // Scope for lock to ensure it's released promptly
+            let mut buffer = self.buffer.lock().await;
+            
+            // Add transaction to buffer
+            let address = transaction.source_address.clone();
+            buffer.pending
+                .entry(address)
+                .or_insert_with(Vec::new)
+                .push(transaction);
+            
+            buffer.total_size += 1;
+            
+            // Check if we should flush
+            should_flush = buffer.total_size >= self.config.max_batch_size ||
+                           buffer.last_flush.elapsed() >= self.config.flush_interval;
+            
+            // If we need to flush, extract the transactions
+            if should_flush {
+                // Get all transactions from buffer
+                transactions_to_flush = self.collect_transactions_for_flush(&mut buffer);
+            } else {
+                transactions_to_flush = Vec::new();
+            }
+        }
         
-        self.buffer.total_size += 1;
-
-        if self.should_flush() {
-            self.flush().await;
+        // Now flush outside the lock if needed
+        if should_flush && !transactions_to_flush.is_empty() {
+            debug!("Flushing {} transactions from add_transaction", transactions_to_flush.len());
+            self.send_transactions_to_worker(transactions_to_flush).await;
         }
     }
 
-    fn should_flush(&self) -> bool {
-        self.buffer.total_size >= self.config.max_batch_size
-            || self.buffer.last_flush.elapsed() >= self.config.flush_interval
+    // Helper to collect transactions for flushing
+    fn collect_transactions_for_flush(&self, buffer: &mut TransactionBuffer) -> Vec<Transaction> {
+        let mut transactions = Vec::with_capacity(buffer.total_size);
+        
+        // Extract all transactions from the pending map
+        for (_, txs) in buffer.pending.drain() {
+            transactions.extend(txs);
+        }
+        
+        // Reset the buffer state
+        buffer.total_size = 0;
+        buffer.last_flush = Instant::now();
+        
+        transactions
     }
 
-    async fn flush(&mut self) {
-        if self.buffer.total_size == 0 {
+    // Helper to send transactions to worker
+    async fn send_transactions_to_worker(&self, transactions: Vec<Transaction>) {
+        if transactions.is_empty() {
             return;
         }
-
-        let mut transactions = Vec::with_capacity(self.buffer.total_size);
         
-        // Drain buffer into transactions vec
-        for (_, mut addr_txs) in self.buffer.pending.drain() {
-            transactions.append(&mut addr_txs);
-        }
-
-        // Sort by block time for consistent ordering
-        transactions.sort_by_key(|tx| tx.block_time);
-
-        match self.worker_sender.send(transactions).await {
+        match self.worker_sender.send(transactions.clone()).await {
             Ok(_) => {
-                debug!("Flushed {} transactions to workers", self.buffer.total_size);
-                self.buffer.total_size = 0;
-                self.buffer.last_flush = Instant::now();
-            }
+                debug!("Successfully sent {} transactions to worker pool", transactions.len());
+            },
             Err(e) => {
-                error!("Failed to send transactions to workers: {}", e);
+                error!("Failed to send transactions to worker pool: {}", e);
             }
         }
     }
 
-    pub async fn start(mut self) {
-        let mut interval = interval(self.config.flush_interval);
+    pub async fn start(&self, shutdown: CancellationToken) {
+        let mut interval_timer = interval(self.config.flush_interval);
 
+        // Perform an initial check immediately on startup
+        self.perform_flush_check().await;
+        
         loop {
-            interval.tick().await;
-            self.flush().await;
+            tokio::select! {
+                _ = interval_timer.tick() => {
+                    // Check and flush on every timer tick
+                    self.perform_flush_check().await;
+                }
+                _ = shutdown.cancelled() => {
+                    info!("BatchManager shutting down, performing final flush");
+                    self.perform_flush_check().await;
+                    break;
+                }
+            }
+        }
+    }
+    
+    // Helper method to check and flush if needed
+    async fn perform_flush_check(&self) {
+        // Extract transactions that need flushing
+        let transactions_to_flush = {
+            let mut buffer = self.buffer.lock().await;
+            
+            // Skip if nothing to flush
+            if buffer.total_size == 0 {
+                return;
+            }
+            
+            // Check if it's time to flush
+            let should_flush = buffer.total_size >= self.config.max_batch_size ||
+                             buffer.last_flush.elapsed() >= self.config.flush_interval;
+            
+            // If it's time to flush, collect transactions
+            if should_flush {
+                let txs = self.collect_transactions_for_flush(&mut buffer);
+                txs
+            } else {
+                Vec::new()
+            }
+        };
+        
+        // Send transactions to worker without holding the lock
+        if !transactions_to_flush.is_empty() {
+            debug!("Timer-based flush of {} transactions", transactions_to_flush.len());
+            self.send_transactions_to_worker(transactions_to_flush).await;
+        }
+    }
+
+    // Add a public method to force a flush
+    pub async fn force_flush(&self) {
+        let transactions_to_flush = {
+            let mut buffer = self.buffer.lock().await;
+            self.collect_transactions_for_flush(&mut buffer)
+        };
+        
+        if !transactions_to_flush.is_empty() {
+            self.send_transactions_to_worker(transactions_to_flush).await;
         }
     }
 }

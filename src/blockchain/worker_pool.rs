@@ -2,8 +2,11 @@ use crate::models::Transaction;
 use crate::state::AppState;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use crate::db::transaction; 
+use crate::blockchain::processor;
+use std::collections::HashSet;
 
 pub struct WorkerPool {
     workers: Vec<WorkerHandle>,
@@ -23,13 +26,11 @@ impl WorkerPool {
         let mut workers = Vec::with_capacity(worker_count);
         
         for id in 0..worker_count {
-            let worker = Worker::new(
-                id,
-                state.clone(),
-                receiver.clone(),
-            );
+            let worker_state = state.clone();
+            let worker_receiver = receiver.clone();
             
             let handle = tokio::spawn(async move {
+                let worker = Worker::new(id, worker_state, worker_receiver);
                 worker.run().await;
             });
             
@@ -74,7 +75,10 @@ impl Worker {
                 let mut receiver = self.receiver.lock().await;
                 match receiver.recv().await {
                     Some(txs) => txs,
-                    None => break,
+                    None => {
+                        info!("Worker {} channel closed, shutting down", self.id);
+                        break;
+                    }
                 }
             };
 
@@ -82,10 +86,33 @@ impl Worker {
                 error!("Worker {} failed to process batch: {}", self.id, e);
             }
         }
+
+        info!("Worker {} shutting down", self.id);
     }
 
     async fn process_batch(&self, transactions: Vec<Transaction>) -> Result<(), sqlx::Error> {
-        // First try to update cache
+        // First register all addresses to avoid foreign key constraint errors
+        let mut addresses_to_register = HashSet::new();
+        
+        for tx in &transactions {
+            // Add source address
+            addresses_to_register.insert(tx.source_address.clone());
+            
+            // Add destination address if present
+            if let Some(dest) = &tx.destination_address {
+                addresses_to_register.insert(dest.clone());
+            }
+        }
+        
+        // Register all addresses
+        for address_str in addresses_to_register {
+            if let Err(e) = crate::db::address::add_address(&self.state.db_pool, &address_str).await {
+                error!("Failed to register address {}: {}", address_str, e);
+                // Continue with other addresses rather than failing completely
+            }
+        }
+
+        // Now try to update cache
         {
             let cache = self.state.cache.lock().await;
             for tx in &transactions {

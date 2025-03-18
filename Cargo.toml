@@ -26,3 +26,6 @@ spl-token = "7.0.0"
 reqwest = { version = "0.12.14", features = ["json"] }
 futures = "0.3.31"
 num_cpus = "1.16.0"
+governor = "0.8.1" # for rate limiting
+backon = "1.4.0" # Modern retry library
+tokio-util = "0.7.1" # for cancellation tokens
