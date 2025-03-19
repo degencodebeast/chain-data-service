@@ -1,6 +1,7 @@
 pub mod address;
 pub mod connection;
 pub mod transaction;
+pub mod migration;
 
 pub const INIT_SCHEMA: &str = r#"
 -- Create tracked_addresses table

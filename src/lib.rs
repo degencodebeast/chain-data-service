@@ -15,6 +15,7 @@ pub mod tests;
 pub use db::connection;
 pub use db::transaction;
 pub use db::address;
+pub use db::migration;
 pub use models::Transaction;
 pub use validation::{validate_action, validate_solana_address, validate_address_action};
 pub use api::error::ApiError;

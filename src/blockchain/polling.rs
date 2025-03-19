@@ -133,9 +133,9 @@ pub async fn start_polling(state: Arc<AppState>, shutdown: CancellationToken) {
                     &batch_manager
                 ).await {
                     Ok(count) => {
-                        if count > 0 {
-                            info!("Processed {} new transactions", count);
-                        }
+                        // Log even when no transactions are found
+                        debug!("Checked slots {}-{}: found {} transactions", 
+                               current_slot, latest_slot, count);
                         current_slot = latest_slot;
                     },
                     Err(e) => error!("Error polling new transactions: {}", e),
@@ -279,9 +279,15 @@ async fn poll_new_transactions(
     end_slot: u64,
     batch_manager: &Arc<tokio::sync::Mutex<BatchManager>>,
 ) -> Result<usize, ClientError> {
+    // Log polling activity so you can see it's working
+    debug!("Polling for new transactions in slots {}-{}", start_slot, end_slot);
+    
     // Get all tracked addresses
     let addresses = match address::get_all_tracked_addresses(db_pool).await {
-        Ok(addrs) => addrs,
+        Ok(addrs) => {
+            debug!("Found {} tracked addresses", addrs.len());
+            addrs
+        },
         Err(e) => {
             error!("Failed to get tracked addresses: {}", e);
             return Ok(0);
@@ -348,6 +354,10 @@ async fn poll_new_transactions(
         }
     }
     
+    // Before returning, log the results
+    debug!("Found {} new transactions in slots {}-{}", 
+           total_processed, start_slot, end_slot);
+    
     Ok(total_processed)
 }
 
@@ -364,7 +374,7 @@ async fn process_transaction_signatures(
     
     let mut processed = 0;
     
-    // Process transactions in batches (existing code to extract transactions)
+    // Process transactions in batches
     let batch_size = 10;
     for chunk in signatures.chunks(batch_size) {
         let mut chunk_transactions = Vec::new();

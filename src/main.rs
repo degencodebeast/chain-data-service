@@ -6,24 +6,49 @@ use chain_data_service::{
         batch_manager::{BatchManager, BatchConfig}
     },
     cache, 
-    config, 
+    config::Config, 
     db, 
     models, 
     service, 
     validation, 
-    state
+    state::AppState
     // Any other modules you need
 };
 
-use state::AppState;
 use std::sync::Arc;
-use config::Config;
 use tokio::sync::Mutex;
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use num_cpus;
 use tracing::{info, warn, error};
+
+// Helper function for shutdown signal handling
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
+    info!("Shutdown signal received");
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -45,9 +70,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db_pool = db::connection::establish_connection().await?;
     info!("Database connection established");
 
-    // Run a simple query to ensure the database is properly initialized
-    sqlx::query("SELECT 1").execute(&db_pool).await?;
-    info!("Database connection verified");
+    // Run migrations if necessary
+    db::migration::run_migrations(&db_pool).await?;
+    info!("Database migrations completed");
 
     // Initialize cache
     let cache = cache::init_cache(&config);
@@ -65,9 +90,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let shutdown = CancellationToken::new();
 
     // Initialize worker pool with proper number of cores
-    let worker_pool = WorkerPool::new(app_state.clone(), num_cpus::get());
+    let worker_count = std::env::var("WORKER_COUNT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| num_cpus::get());
+    
+    let worker_pool = WorkerPool::new(app_state.clone(), worker_count);
     let worker_sender = worker_pool.get_sender();
+    info!("Worker pool initialized with {} workers", worker_count);
+    
+    // Start worker pool
     let worker_shutdown = shutdown.clone();
+    let worker_pool_handle = tokio::spawn(async move {
+        worker_pool.start(worker_shutdown).await;
+    });
+    info!("Worker pool started");
 
     // Initialize batch manager with default config
     let batch_config = BatchConfig::default();
@@ -77,11 +114,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         worker_sender.clone(),
     );
     let batch_shutdown = shutdown.clone();
-
+    
     // Start batch manager in background
     let batch_handle = tokio::spawn(async move {
         batch_manager.start(batch_shutdown).await;
     });
+    info!("Batch manager started");
 
     // Start blockchain polling with worker sender
     let polling_state = app_state.clone();
@@ -121,45 +159,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Initiating graceful shutdown sequence");
     shutdown.cancel();
     
-    // Wait for components to shut down (optional timeout)
+    // Wait for components to shut down (with timeout)
     let shutdown_timeout = tokio::time::Duration::from_secs(10);
+    
     tokio::select! {
-        _ = async {
-            // Wait for all components to complete
-            let _ = tokio::join!(polling_handle, batch_handle, server_handle);
-        } => {
-            info!("All components shut down successfully");
-        }
         _ = tokio::time::sleep(shutdown_timeout) => {
             warn!("Shutdown timed out after {:?}, forcing exit", shutdown_timeout);
         }
+        _ = batch_handle => {
+            info!("Batch manager shut down successfully");
+        }
     }
     
-    info!("Blockchain transaction microservice stopped");
-    Ok(())
-}
-
-// Signal handler for shutdown
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        signal::ctrl_c()
-            .await
-            .expect("Failed to install Ctrl+C handler");
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("Failed to install signal handler")
-            .recv()
-            .await;
-    };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
     tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
+        _ = tokio::time::sleep(shutdown_timeout) => {
+            warn!("Polling shutdown timed out, forcing exit");
+        }
+        _ = polling_handle => {
+            info!("Blockchain polling shut down successfully");
+        }
     }
+    
+    tokio::select! {
+        _ = tokio::time::sleep(shutdown_timeout) => {
+            warn!("Server shutdown timed out, forcing exit");
+        }
+        _ = server_handle => {
+            info!("HTTP server shut down successfully");
+        }
+    }
+    
+    tokio::select! {
+        _ = tokio::time::sleep(shutdown_timeout) => {
+            warn!("Worker pool shutdown timed out, forcing exit");
+        }
+        _ = worker_pool_handle => {
+            info!("Worker pool shut down successfully");
+        }
+    }
+    
+    info!("All components shut down, exiting");
+    Ok(())
 }

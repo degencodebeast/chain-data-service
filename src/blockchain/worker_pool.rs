@@ -3,10 +3,12 @@ use crate::state::AppState;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{error, info, debug};
 use crate::db::transaction; 
 use crate::blockchain::processor;
 use std::collections::HashSet;
+use crate::db::address;
+use crate::blockchain::client::SolanaClient;
 
 pub struct WorkerPool {
     workers: Vec<WorkerHandle>,
@@ -45,6 +47,16 @@ impl WorkerPool {
 
     pub fn get_sender(&self) -> mpsc::Sender<Vec<Transaction>> {
         self.sender.clone()
+    }
+    
+    pub async fn start(&self, shutdown_token: CancellationToken) {
+        info!("Worker pool running with {} workers", self.workers.len());
+        
+        // Wait for shutdown signal
+        shutdown_token.cancelled().await;
+        
+        // When shutdown is triggered, dropping sender will cause all workers to exit
+        info!("Worker pool received shutdown signal");
     }
 }
 
@@ -91,45 +103,40 @@ impl Worker {
     }
 
     async fn process_batch(&self, transactions: Vec<Transaction>) -> Result<(), sqlx::Error> {
-        // First register all addresses to avoid foreign key constraint errors
-        let mut addresses_to_register = HashSet::new();
-        
-        for tx in &transactions {
-            // Add source address
-            addresses_to_register.insert(tx.source_address.clone());
-            
-            // Add destination address if present
-            if let Some(dest) = &tx.destination_address {
-                addresses_to_register.insert(dest.clone());
-            }
+        if transactions.is_empty() {
+            return Ok(());
         }
         
-        // Register all addresses
-        for address_str in addresses_to_register {
-            if let Err(e) = crate::db::address::add_address(&self.state.db_pool, &address_str).await {
-                error!("Failed to register address {}: {}", address_str, e);
-                // Continue with other addresses rather than failing completely
-            }
-        }
-
-        // Now try to update cache
-        // Lock the cache once to access its fields
-        let cache = self.state.cache.lock().await;
+        debug!("Worker processing {} transactions", transactions.len());
         
-        for tx in &transactions {
-            // Invalidate cache for source address
-            cache.transaction_cache.invalidate_for_address(&tx.source_address).await;
-            
-            // Invalidate cache for destination address if present
-            if let Some(dest) = &tx.destination_address {
-                cache.transaction_cache.invalidate_for_address(dest).await;
+        // Create tracked addresses set (needed for process_transaction_batch)
+        let addresses = match address::get_all_tracked_addresses(&self.state.db_pool).await {
+            Ok(addrs) => addrs,
+            Err(e) => {
+                error!("Failed to get tracked addresses: {}", e);
+                return Ok(());
             }
-        }
-
-        // Use existing add_transactions function for database operations
-        transaction::add_transactions(&self.state.db_pool, &transactions).await?;
+        };
+        let tracked_addresses: HashSet<_> = addresses.into_iter().collect();
         
-        info!("Worker {} processed {} transactions", self.id, transactions.len());
+        // Create client
+        let client = SolanaClient::new(&self.state.config);
+        
+        // Extract signatures - this is necessary since process_transaction_batch works with signatures
+        let signatures: Vec<String> = transactions.iter()
+            .map(|tx| tx.signature.clone())
+            .collect();
+        
+        // Now use process_transaction_batch
+        match processor::process_transaction_batch(
+            &client,
+            &self.state.db_pool,
+            &signatures,
+            &tracked_addresses
+        ).await {
+            Ok(count) => debug!("Successfully processed {} transactions", count),
+            Err(e) => error!("Error processing transaction batch: {}", e)
+        }
 
         Ok(())
     }
