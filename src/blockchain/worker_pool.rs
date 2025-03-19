@@ -113,18 +113,16 @@ impl Worker {
         }
 
         // Now try to update cache
-        {
-            let cache = self.state.cache.lock().await;
-            for tx in &transactions {
-                let cache_key = format!("{}:{}:{}", 
-                    tx.source_address, 
-                    tx.block_time, 
-                    tx.block_time + 3600 // 1 hour window for example
-                );
-                if let Some(mut cached_txs) = cache.get(&cache_key).await {
-                    cached_txs.push(tx.clone());
-                    cache.insert(cache_key, cached_txs).await;
-                }
+        // Lock the cache once to access its fields
+        let cache = self.state.cache.lock().await;
+        
+        for tx in &transactions {
+            // Invalidate cache for source address
+            cache.transaction_cache.invalidate_for_address(&tx.source_address).await;
+            
+            // Invalidate cache for destination address if present
+            if let Some(dest) = &tx.destination_address {
+                cache.transaction_cache.invalidate_for_address(dest).await;
             }
         }
 

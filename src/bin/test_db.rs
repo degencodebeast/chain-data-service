@@ -1,5 +1,7 @@
 use chain_data_service::db::{connection, transaction};
 use chain_data_service::models::Transaction;
+use chain_data_service::config::Config;
+use chain_data_service::cache;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -7,6 +9,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Establishing database connection...");
     let pool = connection::establish_connection().await?;
     println!("✅ Database connection established!");
+    
+    // Initialize cache
+    let config = Config::from_env();
+    let test_cache = cache::init_cache(&config);
     
     // Create test transaction
     let test_tx = Transaction {
@@ -29,6 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Querying transactions...");
     let (txs, count) = transaction::get_transactions(
         &pool,
+        &test_cache,
         &test_tx.source_address,
         0,
         chrono::Utc::now().timestamp() + 1000,

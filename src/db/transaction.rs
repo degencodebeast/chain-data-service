@@ -1,5 +1,7 @@
 use sqlx::{Pool, Sqlite, Row};
+use tracing::info;
 use crate::models::Transaction;
+use crate::cache::{CacheKey, AppCache};
 
 pub async fn add_transactions(pool: &Pool<Sqlite>, transactions: &[Transaction]) -> Result<(), sqlx::Error> {
     // Start a transaction for batch insert
@@ -38,12 +40,25 @@ pub async fn add_transactions(pool: &Pool<Sqlite>, transactions: &[Transaction])
 
 pub async fn get_transactions(
     pool: &Pool<Sqlite>,
+    cache: &AppCache,
     address: &str,
     start_time: i64,
     end_time: i64,
     offset: i64,
     limit: i64,
 ) -> Result<(Vec<Transaction>, i64), sqlx::Error> {
+    // Create cache key
+    let cache_key = CacheKey::transaction_query(
+        address, start_time, end_time, offset, limit);
+    
+    // Try to get from cache first
+    if let Some((transactions, total_count)) = cache.transaction_cache.get(&cache_key).await {
+        info!("Cache hit for transaction query: {}", cache_key);
+        return Ok((transactions, total_count));
+    }
+    
+    info!("Cache miss for transaction query: {}", cache_key);
+
     // Get total count first
     let total_count = sqlx::query_scalar!(
         r#"SELECT COUNT(*) FROM transactions 
@@ -85,7 +100,11 @@ pub async fn get_transactions(
             program_id: row.get("program_id"),
             success: row.get::<i32, _>("success") != 0,
         }
-    }).collect();
+    }).collect::<Vec<Transaction>>();
+
+    // Store in cache with appropriate TTL
+    let ttl = cache.transaction_cache.get_ttl_for_time_range(start_time, end_time);
+    cache.transaction_cache.insert(cache_key, (transactions.clone(), total_count), Some(ttl)).await;
 
     Ok((transactions, total_count))
 }

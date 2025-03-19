@@ -23,6 +23,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db_pool = connection::establish_connection().await?;
     let client = Arc::new(SolanaClient::new(&config));
     
+    // Initialize cache and app_state early
+    let cache = chain_data_service::cache::init_cache(&config);
+    let app_state = Arc::new(AppState {
+        config: config.clone(),
+        db_pool: db_pool.clone(),
+        cache: Arc::new(Mutex::new(cache)),
+    });
+    
     // Clear test data
     sqlx::query("DELETE FROM transactions").execute(&db_pool).await?;
     sqlx::query("DELETE FROM tracked_addresses").execute(&db_pool).await?;
@@ -144,16 +152,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("✅ Processed {} transactions", processed);
         
         // 8. Verify transactions in database
+        let cache = app_state.cache.lock().await;
         let (txs, _count) = transaction::get_transactions(
             &db_pool,
-            test_addresses[0],
+            &cache,
+            &test_address,
             0,
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs() as i64,
             0,
-            10
+            100
         ).await?;
         
         info!("✅ Found {} transactions in database", txs.len());
@@ -164,12 +174,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // 9. Test small polling cycle (just to verify it works) - FIX: Use a cancellable approach
     info!("Testing polling mechanism (brief sample)...");
-    let cache = chain_data_service::cache::init_cache(&config);
-    let app_state = Arc::new(AppState {
-        config: config.clone(),
-        db_pool: db_pool.clone(),
-        cache: Arc::new(Mutex::new(cache)),
-    });
     
     // FIX: Create a cancellable task for polling
     let (shutdown_tx, mut shutdown_rx) = oneshot::channel();

@@ -117,50 +117,22 @@ async fn get_transactions(
     info!("Fetching transactions for address: {}, time range: {}-{}, offset: {}, limit: {}", 
           params.address, start_time, end_time, offset, limit);
     
-    // Generate cache key
-    let cache_key = cache::generate_cache_key(&params.address, start_time, end_time);
-    
-    // Try to get from cache first
-    let cache_lock = state.cache.lock().await;
-    if let Some(cached_transactions) = cache_lock.get(&cache_key).await {
-        info!("Cache hit for key: {}", cache_key);
-        
-        // Apply pagination to cached result
-        let total_count = cached_transactions.len() as i64;
-        let paginated_transactions = cached_transactions
-            .iter()
-            .skip(offset as usize)
-            .take(limit as usize)
-            .cloned()
-            .collect::<Vec<_>>();
-        
-        drop(cache_lock); // Release the lock
-        
-        // Return response with total count header
-        return Ok(with_total_count(paginated_transactions, total_count));
-    }
-    
-    // Cache miss, release lock and query database
-    drop(cache_lock);
-    info!("Cache miss for key: {}", cache_key);
-    
-    // Query database
+    // Get transactions with updated function that uses cache
+    let cache = state.cache.lock().await;
     let (transactions, total_count) = transaction::get_transactions(
         &state.db_pool,
+        &cache,
         &params.address,
         start_time,
         end_time,
         offset,
         limit,
-    ).await?;
-    
-    // Store in cache for future requests if we have results and it's not a paginated result
-    if offset == 0 && transactions.len() as i64 == total_count && !transactions.is_empty() {
-        // Acquire lock again for cache update
-        let mut cache_lock = state.cache.lock().await;
-        cache_lock.insert(cache_key.clone(), transactions.clone()).await;
-        info!("Added results to cache with key: {}", cache_key);
-    }
+    )
+    .await
+    .map_err(|e| {
+        error!("Database error: {}", e);
+        ApiError::Database(e)
+    })?;
     
     // Return response with total count header
     Ok(with_total_count(transactions, total_count))

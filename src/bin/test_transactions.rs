@@ -2,12 +2,18 @@ use chain_data_service::db::{connection, transaction};
 use chain_data_service::models::Transaction;
 use std::time::{SystemTime, UNIX_EPOCH};
 use chain_data_service::db::address;
+use chain_data_service::config::Config;
+use chain_data_service::cache;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Establishing database connection...");
     let pool = connection::establish_connection().await?;
     println!("✅ Database connection established!");
+    
+    // Initialize a test cache
+    let config = Config::from_env();
+    let test_cache = cache::init_cache(&config);
     
     println!("Cleaning database before testing...");
     sqlx::query("DELETE FROM transactions").execute(&pool).await?;
@@ -92,6 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Testing time filtering...");
     let (recent_txs, _recent_count) = transaction::get_transactions(
         &pool,
+        &test_cache,
         &source_address,
         hour_ago,  // From hour ago
         now + 1,   // To now
@@ -105,6 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Testing pagination...");
     let (page1, _) = transaction::get_transactions(
         &pool,
+        &test_cache,
         &source_address,
         0,         // From beginning of time
         now + 1,   // To now
@@ -114,6 +122,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     let (page2, _) = transaction::get_transactions(
         &pool,
+        &test_cache,
         &source_address,
         0,         // From beginning of time
         now + 1,   // To now
@@ -130,6 +139,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Testing destination address query...");
     let (dest_txs, _) = transaction::get_transactions(
         &pool,
+        &test_cache,
         &destination_address,
         0,
         now + 1,
@@ -162,6 +172,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Testing NULL field handling...");
     let (null_txs, _) = transaction::get_transactions(
         &pool,
+        &test_cache,
         &source_address_2,
         now - 10,  // Recent only
         now + 1,

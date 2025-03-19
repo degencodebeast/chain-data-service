@@ -8,6 +8,8 @@ pub mod service;
 pub mod validation;
 pub mod state;
 
+#[cfg(test)]
+pub mod tests;
 
 // Re-export specific items for convenience if desired
 pub use db::connection;
