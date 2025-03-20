@@ -6,7 +6,7 @@ use crate::db::INIT_SCHEMA;
 pub async fn establish_connection() -> Result<Pool<Sqlite>, sqlx::Error> {
     let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| {
         // Use absolute path to prevent directory confusion
-        format!("sqlite:{}/data.db", std::env::current_dir().unwrap().display())
+        format!("sqlite:///{}/data.db", std::env::current_dir().unwrap().display())
     });
 
     // Log the actual database path being used

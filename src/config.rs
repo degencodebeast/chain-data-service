@@ -28,7 +28,7 @@ impl Config {
     pub fn from_env() -> Self {
         dotenv().ok();
 
-        let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:data.db".to_string());
+        let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:///data.db".to_string());
         let server_host = env::var("SERVER_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
         let server_port = env::var("SERVER_PORT")
             .unwrap_or_else(|_| "8080".to_string())

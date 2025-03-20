@@ -3,7 +3,7 @@
 // - get_transactions(address: &str, start_time: u64, end_time: u64, offset: u64, limit: u64) -> Result<(Vec<Transaction>, u64)>
 //   Returns transactions and total count
 
-use sqlx::{Pool, Sqlite};
+use sqlx::{Pool, Sqlite, SqlitePool};
 // This import is unused and can be removed
 // use crate::models::Address;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -86,4 +86,32 @@ pub async fn get_all_tracked_addresses(pool: &Pool<Sqlite>) -> Result<Vec<String
     
     Ok(addresses)
     */
+}
+
+// pub async fn get_last_updated_slot(db_pool: &SqlitePool, address: &str) -> Result<Option<u64>, sqlx::Error> {
+//     // Use query_scalar! to get the MAX(slot) directly as i64, then convert to u64
+//     let result: Option<i64> = sqlx::query!(
+//         "SELECT MAX(slot) FROM transactions 
+//          WHERE source_address = ? OR destination_address = ?",
+//         address,
+//         address
+//     )
+//     .fetch_one(db_pool)
+//     .await?;
+    
+//     // Convert i64 to u64 safely
+//     Ok(result.map(|val| val as u64))
+// }
+
+pub async fn get_last_updated_slot(db_pool: &SqlitePool, address: &str) -> Result<Option<u64>, sqlx::Error> {
+    let result = sqlx::query!(
+        "SELECT MAX(slot) as last_slot FROM transactions 
+         WHERE source_address = ? OR destination_address = ?",
+        address,
+        address
+    )
+    .fetch_one(db_pool)
+    .await?;
+    
+    Ok(result.last_slot)
 }

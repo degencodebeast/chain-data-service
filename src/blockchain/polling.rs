@@ -5,7 +5,7 @@ use crate::models::Transaction;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH, Instant};
 use tokio::time::{sleep, interval};
 use tokio_util::sync::CancellationToken;
 use backon::{Retryable, ExponentialBuilder};
@@ -418,4 +418,50 @@ async fn process_transaction_signatures(
     debug!("Added {} transactions to batch manager", processed);
     Ok(processed)
 }
+
+// struct RateLimiter {
+//     tokens: std::sync::atomic::AtomicUsize,
+//     last_refill: std::sync::Mutex<Instant>,
+//     tokens_per_second: usize,
+// }
+
+// impl RateLimiter {
+//     fn new(tokens_per_second: usize) -> Self {
+//         Self {
+//             tokens: std::sync::atomic::AtomicUsize::new(tokens_per_second),
+//             last_refill: std::sync::Mutex::new(Instant::now()),
+//             tokens_per_second,
+//         }
+//     }
+
+//     async fn acquire(&self) {
+//         loop {
+//             // Try to take a token
+//             let current = self.tokens.load(std::sync::atomic::Ordering::Relaxed);
+//             if current > 0 && self.tokens.compare_exchange(
+//                 current, 
+//                 current - 1,
+//                 std::sync::atomic::Ordering::Relaxed,
+//                 std::sync::atomic::Ordering::Relaxed
+//             ).is_ok() {
+//                 return;
+//             }
+            
+//             // No tokens, refill and try again
+//             let mut last_refill = self.last_refill.lock().unwrap();
+//             let elapsed = last_refill.elapsed();
+//             if elapsed >= Duration::from_secs(1) {
+//                 // Refill tokens
+//                 self.tokens.store(self.tokens_per_second, std::sync::atomic::Ordering::Relaxed);
+//                 *last_refill = Instant::now();
+//                 continue;
+//             }
+            
+//             // Wait for refill
+//             let wait_time = Duration::from_secs(1) - elapsed;
+//             drop(last_refill);  // Drop lock before sleeping
+//             sleep(wait_time).await;
+//         }
+//     }
+// }
 
