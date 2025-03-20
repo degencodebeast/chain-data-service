@@ -264,7 +264,6 @@ Retrieve transactions for a tracked address within a specified time range.
       "program_id": "11111111111111111111111111111111",
       "success": true
     },
-    // More transactions...
   ]
 }
 ```
